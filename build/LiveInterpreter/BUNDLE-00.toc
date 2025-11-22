@@ -1,0 +1,3 @@
+([('LiveInterpreter',
+   '/Users/hamma/Dev/Azure/dist/LiveInterpreter',
+   'EXECUTABLE')],)

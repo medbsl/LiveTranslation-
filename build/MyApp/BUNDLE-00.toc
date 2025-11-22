@@ -1,0 +1,1 @@
+([('MyApp', '/Users/hamma/Dev/Azure/dist/MyApp', 'EXECUTABLE')],)

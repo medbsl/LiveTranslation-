@@ -1,10 +1,10 @@
 import tkinter as tk
 from queue import Empty
+import time
 
 class SubtitleWindow:
-    def __init__(self, queue, on_clear_callback):
+    def __init__(self, queue):
         self.queue = queue
-        self.on_clear = on_clear_callback   # <-- callback from main
 
         self.root = tk.Tk()
         self.root.title("Live Interpreter")
@@ -12,9 +12,10 @@ class SubtitleWindow:
         self.root.configure(bg="#000000")
 
         self.root.geometry("1400x180")
-        self.root.minsize(600, 120)
+        self.root.minsize(600, 150)
         self.root.resizable(True, False)
 
+        # -------- 2-LINE YOUTUBE STYLE --------
         self.line1 = tk.Label(
             self.root, text="", font=("Helvetica Neue", 30, "bold"),
             fg="#E0E0E0", bg="#000000", anchor="center"
@@ -27,55 +28,83 @@ class SubtitleWindow:
         )
         self.line2.pack(pady=5, fill="x")
 
+        # -------- Smoothing (debounce) --------
+        self.last_update_time = 0
+        self.min_interval = 150  # ms
+        self.buffer_line1 = ""
+        self.buffer_line2 = ""
+
+        # -------- Dynamic chunk size (auto width) --------
+        self.dynamic_max_words = 8
+        self.test_label = tk.Label(self.root, font=("Helvetica Neue", 30, "bold"))
+
         self.root.after(20, self.process_queue)
 
-    def trim_line(self, text, font_widget):
-        text = str(text).strip()
+    # --------------------------------------------------------
+    # Calculate max words that fit inside window
+    # --------------------------------------------------------
+    def calculate_dynamic_max_words(self, sample_words):
+        max_width = self.root.winfo_width() - 40
+
+        for n in range(3, 20):
+            chunk = " ".join(sample_words[:n])
+            self.test_label.config(text=chunk)
+            self.test_label.update_idletasks()
+
+            if self.test_label.winfo_reqwidth() > max_width:
+                return max(3, n - 1)  # never less than 3
+
+        return 10
+
+    # --------------------------------------------------------
+    # Split entire sentence into chunks of N words
+    # --------------------------------------------------------
+    def chunk_words(self, text):
+        text = text.strip()
         if not text:
             return ""
 
-        max_width = self.root.winfo_width() - 40
-
-        temp = tk.Label(self.root, font=font_widget.cget("font"))
-
-        # Start from the full text → remove words from the LEFT until it fits
         words = text.split()
-        while words:
-            candidate = " ".join(words)
-            temp.config(text=candidate)
-            temp.update_idletasks()
 
-            if temp.winfo_reqwidth() <= max_width:
-                return candidate  # ✔ fits → show it
+        # Calculate how many words fit
+        self.dynamic_max_words = self.calculate_dynamic_max_words(words)
 
-            # too long → drop the oldest word
-            words.pop(0)
+        total_words = len(words)
+        chunk_index = (total_words - 1) // self.dynamic_max_words
 
-        return ""
+        start = chunk_index * self.dynamic_max_words
+        end = start + self.dynamic_max_words
 
+        return " ".join(words[start:end])
 
-    def update_labels(self, line_raw, line_translated):
-        clean1 = self.trim_line(line_raw, self.line1)
-        clean2 = self.trim_line(line_translated, self.line2)
-
-        if clean1 == "" or clean2 == "":
-            # clear UI
-            self.line1.config(text="")
-            self.line2.config(text="")
-            # notify main.py that clear occurred
-            self.on_clear()
+    # --------------------------------------------------------
+    # Smooth update (YouTube-style)
+    # --------------------------------------------------------
+    def update_smooth(self):
+        now = int(time.time() * 1000)
+        if now - self.last_update_time < self.min_interval:
             return
 
-        self.line1.config(text=clean1)
-        self.line2.config(text=clean2)
+        self.last_update_time = now
 
+        line1_clean = self.chunk_words(self.buffer_line1)
+        line2_clean = self.chunk_words(self.buffer_line2)
+
+        self.line1.config(text=line1_clean)
+        self.line2.config(text=line2_clean)
+
+    # --------------------------------------------------------
+    # Process recognizer queue
+    # --------------------------------------------------------
     def process_queue(self):
         try:
             l1, l2 = self.queue.get_nowait()
-            self.update_labels(l1, l2)
+            self.buffer_line1 = l1
+            self.buffer_line2 = l2
         except Empty:
             pass
 
+        self.update_smooth()
         self.root.after(20, self.process_queue)
 
     def run(self):

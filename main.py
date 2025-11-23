@@ -88,5 +88,5 @@ threading.Thread(target=recognizer_thread, daemon=True).start()
 
 # ----------- START UI -----------
 
-win = SubtitleWindow(queue, on_clear)
+win = SubtitleWindow(queue)
 win.run()

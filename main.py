@@ -5,13 +5,24 @@ from queue import Queue
 import configparser
 import deepl  # <---- NEW
 
+
+import sys, os
+
+def resource_path(filename):
+    # When we are inside a PyInstaller .app
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, filename)
+    # When running normally from terminal
+    return os.path.join(os.path.dirname(__file__), filename)
+
+
 # -------- global vars to fix long sentence issue --------
 cleared = False
 last_partial = ""
 
 # ---------------------------------------------------------
 config = configparser.ConfigParser()
-config.read("Settings.ini")
+config.read(resource_path("Settings.ini"))
 
 speech_key = config["azure"]["key"]
 service_region = config["azure"]["region"]

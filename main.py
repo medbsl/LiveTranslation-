@@ -1,42 +1,24 @@
 import azure.cognitiveservices.speech as speechsdk
 from subtitle_window import SubtitleWindow
-
-from queue import Queue
 import threading
+from queue import Queue
 import configparser
 
+# -------- global vars to fix long sentence issue --------
+cleared = False
+last_partial = ""
 
-
-# ----------------------------------------------------
-# CONFIGURATION
-# ----------------------------------------------------
-
+# ---------------------------------------------------------
 config = configparser.ConfigParser()
 config.read("Settings.ini")
 
 speech_key = config["azure"]["key"]
 service_region = config["azure"]["region"]
 
-
-
-
 queue = Queue()
 
-last_original = ""
-last_translated = ""
-
-def reset_recognizer_memory():
-    """Called when the subtitle window clears due to overflow."""
-    global last_original, last_translated
-    last_original = ""
-    last_translated = ""
-
-
-# -------------------------------
-# Azure Speech Setup
-# -------------------------------
 auto_detect = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
-    languages=["de-DE", "ar-EG"]
+    languages=["de-DE", "ar-EG", "ar-SA", "ar-AE"]
 )
 
 translation_config = speechsdk.translation.SpeechTranslationConfig(
@@ -44,8 +26,8 @@ translation_config = speechsdk.translation.SpeechTranslationConfig(
     region=service_region
 )
 
-translation_config.add_target_language("ar")   # DE → AR
-translation_config.add_target_language("de")   # AR → DE
+translation_config.add_target_language("ar")
+translation_config.add_target_language("de")
 
 audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
 
@@ -57,12 +39,16 @@ translator = speechsdk.translation.TranslationRecognizer(
 
 print("\n⚡ REAL-TIME Interpreter (German ↔ Arabic)\n")
 
+# ----------- on-clear callback -----------
 
-# -------------------------------
-# Callbacks
-# -------------------------------
+def on_clear():
+    global cleared
+    cleared = True
+
+# ----------- recognizer event -----------
+
 def handle_recognizing(evt):
-    global last_original, last_translated
+    global cleared, last_partial
 
     detected_lang = evt.result.properties.get(
         speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult
@@ -72,54 +58,35 @@ def handle_recognizing(evt):
     translations = evt.result.translations
 
     if detected_lang == "de-DE":
-        translated_text = translations.get("ar", "").strip()
-        label_original, label_translated = "DE", "AR"
+        translated_text = translations.get("ar", "")
+        L1, L2 = "DE", "AR"
     else:
-        translated_text = translations.get("de", "").strip()
-        label_original, label_translated = "AR", "DE"
+        translated_text = translations.get("de", "")
+        L1, L2 = "AR", "DE"
 
-    # New fresh block to send to UI
+    # ---- skip repeated long text after clearing ----
+    if cleared:
+        if original_text == last_partial:
+            return      # ignore duplicates
+        cleared = False  # now accept new text
+
+    last_partial = original_text
+
     queue.put((
-        f"{label_original}: {original_text}",
-        f"{label_translated}: {translated_text}"
+        f"{L1}: {original_text}",
+        f"{L2}: {translated_text}"
     ))
 
-    new_original = (
-        original_text[len(last_original):]
-        if original_text.startswith(last_original)
-        else original_text
-    )
-
-    new_translated = (
-        translated_text[len(last_translated):]
-        if translated_text.startswith(last_translated)
-        else translated_text
-    )
-
-
-def handle_recognized(evt):
-    """When Azure finalizes a phrase, reset memory."""
-    global last_original, last_translated
-    last_original = ""
-    last_translated = ""
-
-
 translator.recognizing.connect(handle_recognizing)
-translator.recognized.connect(handle_recognized)
 
+# ----------- run recognizer in thread -----------
 
-# -------------------------------
-# Recognizer Thread
-# -------------------------------
 def recognizer_thread():
     translator.start_continuous_recognition_async().get()
 
-
 threading.Thread(target=recognizer_thread, daemon=True).start()
 
+# ----------- START UI -----------
 
-# -------------------------------
-# Start UI
-# -------------------------------
-win = SubtitleWindow(queue, reset_recognizer_memory)
+win = SubtitleWindow(queue, on_clear)
 win.run()

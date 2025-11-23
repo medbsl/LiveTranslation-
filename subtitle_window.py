@@ -1,11 +1,10 @@
 import tkinter as tk
 from queue import Empty
-import time
 
 class SubtitleWindow:
-    def __init__(self, queue, reset_callback):
+    def __init__(self, queue, on_clear_callback):
         self.queue = queue
-        self.reset_callback = reset_callback
+        self.on_clear = on_clear_callback   # <-- callback from main
 
         self.root = tk.Tk()
         self.root.title("Live Interpreter")
@@ -16,14 +15,12 @@ class SubtitleWindow:
         self.root.minsize(600, 120)
         self.root.resizable(True, False)
 
-        # First line (original)
         self.line1 = tk.Label(
             self.root, text="", font=("Helvetica Neue", 30, "bold"),
             fg="#E0E0E0", bg="#000000", anchor="center"
         )
         self.line1.pack(pady=5, fill="x")
 
-        # Second line (translation)
         self.line2 = tk.Label(
             self.root, text="", font=("Helvetica Neue", 34, "bold"),
             fg="#FFEB3B", bg="#000000", anchor="center"
@@ -32,56 +29,50 @@ class SubtitleWindow:
 
         self.root.after(20, self.process_queue)
 
-    # --------------------------------------------------------
-    # Trim logic: if text exceeds label width → signal "RESET"
-    # --------------------------------------------------------
     def trim_line(self, text, font_widget):
-        if not isinstance(text, str):
-            text = str(text)
-
-        text = text.strip()
-
-        if text == "":
+        text = str(text).strip()
+        if not text:
             return ""
 
         max_width = self.root.winfo_width() - 40
 
         temp = tk.Label(self.root, font=font_widget.cget("font"))
-        temp.config(text=text)
-        temp.update_idletasks()
 
-        if temp.winfo_reqwidth() <= max_width:
-            return text
+        # Start from the full text → remove words from the LEFT until it fits
+        words = text.split()
+        while words:
+            candidate = " ".join(words)
+            temp.config(text=candidate)
+            temp.update_idletasks()
 
-        # Too long → CLEAR the line but allow it to continue
-        return ""   # NOT None
+            if temp.winfo_reqwidth() <= max_width:
+                return candidate  # ✔ fits → show it
 
-    # --------------------------------------------------------
-    # Update the two subtitle lines
-    # --------------------------------------------------------
+            # too long → drop the oldest word
+            words.pop(0)
+
+        return ""
+
+
     def update_labels(self, line_raw, line_translated):
         clean1 = self.trim_line(line_raw, self.line1)
         clean2 = self.trim_line(line_translated, self.line2)
 
-        # If exceeded → clear both lines + reset recognizer memory
-        if clean1 == "" and clean2 == "":
+        if clean1 == "" or clean2 == "":
+            # clear UI
             self.line1.config(text="")
             self.line2.config(text="")
-
-            self.reset_callback()   # resets last_original + last_translated
+            # notify main.py that clear occurred
+            self.on_clear()
             return
 
-        # Continue normally
         self.line1.config(text=clean1)
         self.line2.config(text=clean2)
 
-    # --------------------------------------------------------
-    # Check queue for new text from recognizer
-    # --------------------------------------------------------
     def process_queue(self):
         try:
-            data = self.queue.get_nowait()
-            self.update_labels(*data)
+            l1, l2 = self.queue.get_nowait()
+            self.update_labels(l1, l2)
         except Empty:
             pass
 

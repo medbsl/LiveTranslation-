@@ -102,8 +102,8 @@ def handle_recognizing(evt):
 
     # -------- PUSH TO WINDOW --------
     queue.put((
-        f"{src}: {original_text}",
-        f"{tgt}: {translated_text}"
+        original_text,
+        translated_text
     ))
 
 

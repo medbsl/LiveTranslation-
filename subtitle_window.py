@@ -28,20 +28,21 @@ class SubtitleWindow:
         )
         self.line2.pack(pady=5, fill="x")
 
-        # -------- Smoothing (debounce) --------
+        # -------- smoothing / stability --------
         self.last_update_time = 0
-        self.min_interval = 150  # ms
+        self.min_interval = 180   # update UI only every 220 ms (SMOOTH)
+        self.freeze_after_final = 450  # freeze final text for readability (ms)
+
         self.buffer_line1 = ""
         self.buffer_line2 = ""
+        self.last_final_time = 0
 
-        # -------- Dynamic chunk size (auto width) --------
-        self.dynamic_max_words = 8
+        # dynamic word limit based on width
+        self.dynamic_max_words = 10
         self.test_label = tk.Label(self.root, font=("Helvetica Neue", 30, "bold"))
 
         self.root.after(20, self.process_queue)
 
-    # --------------------------------------------------------
-    # Calculate max words that fit inside window
     # --------------------------------------------------------
     def calculate_dynamic_max_words(self, sample_words):
         max_width = self.root.winfo_width() - 40
@@ -52,12 +53,10 @@ class SubtitleWindow:
             self.test_label.update_idletasks()
 
             if self.test_label.winfo_reqwidth() > max_width:
-                return max(3, n - 1)  # never less than 3
+                return max(3, n - 1)
 
         return 10
 
-    # --------------------------------------------------------
-    # Split entire sentence into chunks of N words
     # --------------------------------------------------------
     def chunk_words(self, text):
         text = text.strip()
@@ -66,22 +65,33 @@ class SubtitleWindow:
 
         words = text.split()
 
-        # Calculate how many words fit
-        self.dynamic_max_words = self.calculate_dynamic_max_words(words)
-
+        max_words = self.dynamic_max_words  # your auto-calculated limit
         total_words = len(words)
-        chunk_index = (total_words - 1) // self.dynamic_max_words
 
-        start = chunk_index * self.dynamic_max_words
-        end = start + self.dynamic_max_words
+        # How many chunks exist so far?
+        chunk_count = (total_words - 1) // max_words
 
-        return " ".join(words[start:end])
+        # Compute current chunk boundaries
+        start = chunk_count * max_words
+        end = start + max_words
+
+        # Slice exact chunk
+        chunk = words[start:end]
+
+        return " ".join(chunk)
+
 
     # --------------------------------------------------------
-    # Smooth update (YouTube-style)
+    # NEW: Smooth + stabilized update
     # --------------------------------------------------------
     def update_smooth(self):
         now = int(time.time() * 1000)
+
+        # ---------- freeze after final result ----------
+        if now - self.last_final_time < self.freeze_after_final:
+            return
+
+        # ---------- debounce fast updates ----------
         if now - self.last_update_time < self.min_interval:
             return
 
@@ -94,13 +104,18 @@ class SubtitleWindow:
         self.line2.config(text=line2_clean)
 
     # --------------------------------------------------------
-    # Process recognizer queue
-    # --------------------------------------------------------
     def process_queue(self):
         try:
             l1, l2 = self.queue.get_nowait()
+
+            # If incoming text ends with punctuation → final sentence
+            if l2.strip().endswith((".", "!", "؟", "?", "…")):
+                self.last_final_time = int(time.time() * 1000)
+
             self.buffer_line1 = l1
             self.buffer_line2 = l2
+
+
         except Empty:
             pass
 

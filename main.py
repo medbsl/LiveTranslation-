@@ -1,14 +1,40 @@
 import azure.cognitiveservices.speech as speechsdk
 from subtitle_window import SubtitleWindow
 
+from queue import Queue
+import threading
+import configparser
+
+
+
 # ----------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------
 
+config = configparser.ConfigParser()
+config.read("Settings.ini")
 
-win = SubtitleWindow()
+speech_key = config["azure"]["key"]
+service_region = config["azure"]["region"]
 
-# Auto-detect speech (German ↔ Arabic)
+
+
+
+queue = Queue()
+
+last_original = ""
+last_translated = ""
+
+def reset_recognizer_memory():
+    """Called when the subtitle window clears due to overflow."""
+    global last_original, last_translated
+    last_original = ""
+    last_translated = ""
+
+
+# -------------------------------
+# Azure Speech Setup
+# -------------------------------
 auto_detect = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
     languages=["de-DE", "ar-EG"]
 )
@@ -18,8 +44,8 @@ translation_config = speechsdk.translation.SpeechTranslationConfig(
     region=service_region
 )
 
-translation_config.add_target_language("ar")   # German → Arabic
-translation_config.add_target_language("de")   # Arabic → German
+translation_config.add_target_language("ar")   # DE → AR
+translation_config.add_target_language("de")   # AR → DE
 
 audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
 
@@ -31,9 +57,10 @@ translator = speechsdk.translation.TranslationRecognizer(
 
 print("\n⚡ REAL-TIME Interpreter (German ↔ Arabic)\n")
 
-last_original = ""
-last_translated = ""
 
+# -------------------------------
+# Callbacks
+# -------------------------------
 def handle_recognizing(evt):
     global last_original, last_translated
 
@@ -51,7 +78,12 @@ def handle_recognizing(evt):
         translated_text = translations.get("de", "").strip()
         label_original, label_translated = "AR", "DE"
 
-    # Extract ONLY new part (live-diff)
+    # New fresh block to send to UI
+    queue.put((
+        f"{label_original}: {original_text}",
+        f"{label_translated}: {translated_text}"
+    ))
+
     new_original = (
         original_text[len(last_original):]
         if original_text.startswith(last_original)
@@ -64,23 +96,30 @@ def handle_recognizing(evt):
         else translated_text
     )
 
-    win.update(
-        f"{label_original}: {original_text}",
-        f"{label_translated}: {translated_text}"
-    )
-
-    last_original = original_text
-    last_translated = translated_text
-
 
 def handle_recognized(evt):
+    """When Azure finalizes a phrase, reset memory."""
     global last_original, last_translated
     last_original = ""
     last_translated = ""
 
+
 translator.recognizing.connect(handle_recognizing)
 translator.recognized.connect(handle_recognized)
 
-translator.start_continuous_recognition()
+
+# -------------------------------
+# Recognizer Thread
+# -------------------------------
+def recognizer_thread():
+    translator.start_continuous_recognition_async().get()
+
+
+threading.Thread(target=recognizer_thread, daemon=True).start()
+
+
+# -------------------------------
+# Start UI
+# -------------------------------
+win = SubtitleWindow(queue, reset_recognizer_memory)
 win.run()
-translator.stop_continuous_recognition()

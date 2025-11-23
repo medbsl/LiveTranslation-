@@ -1,80 +1,91 @@
 import tkinter as tk
+from queue import Empty
+import time
 
 class SubtitleWindow:
-    def __init__(self):
+    def __init__(self, queue, reset_callback):
+        self.queue = queue
+        self.reset_callback = reset_callback
+
         self.root = tk.Tk()
         self.root.title("Live Interpreter")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#000000")
-        
-        # Adaptive width / height
+
         self.root.geometry("1400x180")
         self.root.minsize(600, 120)
-        
-        # Allow horizontal stretch, but keep height small
         self.root.resizable(True, False)
 
-        # --- LINE 1 (Original Spoken Text) ---
+        # First line (original)
         self.line1 = tk.Label(
-            self.root,
-            text="",
-            font=("Helvetica Neue", 30, "bold"),
-            fg="#E0E0E0",
-            bg="#000000",
-            wraplength=0,
-            justify="center"
+            self.root, text="", font=("Helvetica Neue", 30, "bold"),
+            fg="#E0E0E0", bg="#000000", anchor="center"
         )
         self.line1.pack(pady=5, fill="x")
 
-        # --- LINE 2 (Translation) ---
+        # Second line (translation)
         self.line2 = tk.Label(
-            self.root,
-            text="",
-            font=("Helvetica Neue", 34, "bold"),
-            fg="#FFEB3B",
-            bg="#000000",
-            wraplength=0,
-            justify="center"
+            self.root, text="", font=("Helvetica Neue", 34, "bold"),
+            fg="#FFEB3B", bg="#000000", anchor="center"
         )
         self.line2.pack(pady=5, fill="x")
 
-    # -----------------------------------------
-    # SMART TRIMMING (Keeps text readable)
-    # -----------------------------------------
+        self.root.after(20, self.process_queue)
+
+    # --------------------------------------------------------
+    # Trim logic: if text exceeds label width → signal "RESET"
+    # --------------------------------------------------------
     def trim_line(self, text, font_widget):
+        if not isinstance(text, str):
+            text = str(text)
+
+        text = text.strip()
+
+        if text == "":
+            return ""
+
         max_width = self.root.winfo_width() - 40
+
         temp = tk.Label(self.root, font=font_widget.cget("font"))
-        words = text.split()
+        temp.config(text=text)
+        temp.update_idletasks()
 
-        result = []
-        temp_text = ""
+        if temp.winfo_reqwidth() <= max_width:
+            return text
 
-        for word in reversed(words):
-            test_text = word + (" " + temp_text if temp_text else "")
-            temp.config(text=test_text)
-            temp.update_idletasks()
+        # Too long → CLEAR the line but allow it to continue
+        return ""   # NOT None
 
-            if temp.winfo_reqwidth() > max_width:
-                break
+    # --------------------------------------------------------
+    # Update the two subtitle lines
+    # --------------------------------------------------------
+    def update_labels(self, line_raw, line_translated):
+        clean1 = self.trim_line(line_raw, self.line1)
+        clean2 = self.trim_line(line_translated, self.line2)
 
-            result.insert(0, word)
-            temp_text = test_text
+        # If exceeded → clear both lines + reset recognizer memory
+        if clean1 == "" and clean2 == "":
+            self.line1.config(text="")
+            self.line2.config(text="")
 
-        return " ".join(result) if result else words[-1]
+            self.reset_callback()   # resets last_original + last_translated
+            return
 
-    # -----------------------------------------
-    # UPDATE WINDOW
-    # -----------------------------------------
-    def update(self, line_raw, line_translated):
-        # trim both lines nicely
-        line1_clean = self.trim_line(line_raw, self.line1)
-        line2_clean = self.trim_line(line_translated, self.line2)
+        # Continue normally
+        self.line1.config(text=clean1)
+        self.line2.config(text=clean2)
 
-        self.line1.config(text=line1_clean)
-        self.line2.config(text=line2_clean)
+    # --------------------------------------------------------
+    # Check queue for new text from recognizer
+    # --------------------------------------------------------
+    def process_queue(self):
+        try:
+            data = self.queue.get_nowait()
+            self.update_labels(*data)
+        except Empty:
+            pass
 
-        self.root.update_idletasks()
-        self.root.update()
+        self.root.after(20, self.process_queue)
 
     def run(self):
         self.root.mainloop()
